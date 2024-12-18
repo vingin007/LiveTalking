@@ -63,20 +63,22 @@ avatar = None
 #     print(response)
 #     return response
 
+# 定义全局变量
+llm_output_text = ""
 def llm_response(message,nerfreal):
+    global llm_output_text  # 声明使用全局变量
     start = time.perf_counter()
     from openai import OpenAI
     client = OpenAI(
-        # 如果您没有配置环境变量，请在此处用您的API Key进行替换
-        api_key=os.getenv("DASHSCOPE_API_KEY"),
-        # 填写DashScope SDK的base_url
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        api_key="sk-fastgpt",
+        base_url="http://127.0.0.1:3001/v1",
     )
     end = time.perf_counter()
     print(f"llm Time init: {end-start}s")
     completion = client.chat.completions.create(
-        model="qwen-plus",
-        messages=[{'role': 'system', 'content': 'You are a helpful assistant.'},
+        model="qwen2.5-instruct",
+        messages=[{'role': 'system',
+                   'content': '我是延长石油气田公司的虚拟人:气晓田，很高兴为您服务，我能够给您接到关于气田公司内部的问题，您有任何问题可以随时咨询我'},
                   {'role': 'user', 'content': message}],
         stream=True,
         # 通过以下设置，在流式输出的最后一行展示token使用信息
@@ -101,10 +103,13 @@ def llm_response(message,nerfreal):
                     if len(result)>10:
                         print(result)
                         nerfreal.put_msg_txt(result)
+                        # 累加到全局变量
+                        llm_output_text += result
                         result=""
             result = result+msg[lastpos:]
     end = time.perf_counter()
     print(f"llm Time to last chunk: {end-start}s")
+    llm_output_text += result
     nerfreal.put_msg_txt(result)            
 
 #####webrtc###############################
@@ -129,6 +134,20 @@ def build_nerfreal(sessionid):
         nerfreal = NeRFReal(opt,model,avatar)
     return nerfreal
 
+async def get_llm_output(request):
+    global llm_output_text
+    try:
+        if llm_output_text:
+            response = llm_output_text
+            llm_output_text = ""  # 读取后清空变量
+            logging.info(f"Returning LLM output: {response}")
+            return web.json_response({'status': 'success', 'data': response})
+        else:
+            logging.info("LLM output is empty")
+            return web.json_response({'status': 'empty', 'data': ''})
+    except Exception as e:
+        logging.exception("Error in get_llm_output")
+        return web.json_response({'status': 'error', 'message': 'Internal Server Error'}, status=500)
 #@app.route('/offer', methods=['POST'])
 async def offer(request):
     params = await request.json()
@@ -491,6 +510,7 @@ if __name__ == '__main__':
     appasync.router.add_post("/offer", offer)
     appasync.router.add_post("/human", human)
     appasync.router.add_post("/humanaudio", humanaudio)
+    appasync.router.add_get("/get_llm_output", get_llm_output)
     appasync.router.add_post("/set_audiotype", set_audiotype)
     appasync.router.add_post("/record", record)
     appasync.router.add_post("/is_speaking", is_speaking)
