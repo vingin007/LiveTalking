@@ -40,7 +40,6 @@ from webrtc import HumanPlayer
 
 import argparse
 import random
-import logging
 
 import shutil
 import asyncio
@@ -67,7 +66,6 @@ avatar = None
 # 定义全局变量
 llm_output_text = ""
 
-logging.basicConfig(level=logging.DEBUG)
 def llm_response(message,nerfreal):
     global llm_output_text  # 声明使用全局变量
     start = time.perf_counter()
@@ -145,13 +143,10 @@ async def get_llm_output(request):
         if llm_output_text:
             response = llm_output_text
             llm_output_text = ""  # 读取后清空变量
-            logging.info(f"Returning LLM output: {response}")
             return web.json_response({'status': 'success', 'data': response})
         else:
-            logging.info("LLM output is empty")
             return web.json_response({'status': 'empty', 'data': ''})
     except Exception as e:
-        logging.exception("Error in get_llm_output")
         return web.json_response({'status': 'error', 'message': 'Internal Server Error'}, status=500)
 #@app.route('/offer', methods=['POST'])
 async def offer(request):
