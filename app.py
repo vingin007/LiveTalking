@@ -40,6 +40,7 @@ from webrtc import HumanPlayer
 
 import argparse
 import random
+import logging
 
 import shutil
 import asyncio
@@ -65,6 +66,8 @@ avatar = None
 
 # 定义全局变量
 llm_output_text = ""
+
+logging.basicConfig(level=logging.DEBUG)
 def llm_response(message,nerfreal):
     global llm_output_text  # 声明使用全局变量
     start = time.perf_counter()
