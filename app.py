@@ -89,11 +89,13 @@ def llm_response(message,nerfreal):
     for chunk in completion:
         if len(chunk.choices)>0:
             #print(chunk.choices[0].delta.content)
+            msg = chunk.choices[0].delta.content
+            if msg is None:
+                continue  # 跳过本次循环，继续下一个 chunk
             if first:
                 end = time.perf_counter()
                 print(f"llm Time to first chunk: {end-start}s")
                 first = False
-            msg = chunk.choices[0].delta.content
             lastpos=0
             #msglist = re.split('[,.!;:，。！?]',msg)
             for i, char in enumerate(msg):
