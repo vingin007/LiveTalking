@@ -200,24 +200,52 @@ async def offer(request):
         ),
     )
 
-async def human(request):
-    params = await request.json()
 
-    sessionid = params.get('sessionid',0)
+async def load_answers_from_json():
+    """
+    如果不想每次请求都读取JSON文件，可以把这个函数
+    放到全局或者服务启动阶段去加载一次，提高性能。
+    """
+    with open('answers.json', 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+async def human(request):
+    # 读取请求体
+    params = await request.json()
+    sessionid = params.get('sessionid', 0)
+
+    # 如果 interrupt 存在，则重置对话
     if params.get('interrupt'):
         nerfreals[sessionid].flush_talk()
 
-    if params['type']=='echo':
-        nerfreals[sessionid].put_msg_txt(params['text'])
-    elif params['type']=='chat':
-        res=await asyncio.get_event_loop().run_in_executor(None, llm_response, params['text'],nerfreals[sessionid])                         
-        #nerfreals[sessionid].put_msg_txt(res)
+    # 读取当前请求中的 text
+    user_text = params.get('text', '')
 
+    # 加载 answers.json 中的问题-答案映射
+    answers_map = await load_answers_from_json()
+
+    # 判断 text 是否在 answers_map 中，如果是，就替换成 echo 类型和对应答案
+    if user_text in answers_map:
+        params['type'] = 'echo'
+        params['text'] = answers_map[user_text]
+
+    # 根据 params['type'] 进行处理
+    if params['type'] == 'echo':
+        # echo类型，将text放入队列
+        nerfreals[sessionid].put_msg_txt(params['text'])
+    elif params['type'] == 'chat':
+        # chat类型，在线程池中调用llm_response计算
+        res = await asyncio.get_event_loop().run_in_executor(
+            None, llm_response, params['text'], nerfreals[sessionid]
+        )
+        # 如果你需要将 LLM 的返回值再放入队列，可以取消下一行的注释
+        # nerfreals[sessionid].put_msg_txt(res)
+
+    # 返回成功
     return web.Response(
         content_type="application/json",
-        text=json.dumps(
-            {"code": 0, "data":"ok"}
-        ),
+        text=json.dumps({"code": 0, "data": "ok"}, ensure_ascii=False)
     )
 
 async def humanaudio(request):
