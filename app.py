@@ -233,6 +233,8 @@ async def human(request):
     # 根据 params['type'] 进行处理
     if params['type'] == 'echo':
         # echo类型，将text放入队列
+        global llm_output_text
+        llm_output_text = params['text']
         nerfreals[sessionid].put_msg_txt(params['text'])
     elif params['type'] == 'chat':
         # chat类型，在线程池中调用llm_response计算
