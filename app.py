@@ -81,8 +81,7 @@ def llm_response(message,nerfreal):
         messages=[{'role': 'system',
                    'content': '我是延长石油气田公司的虚拟人:气晓田，很高兴为您服务，我能够给您接到关于气田公司内部的问题，您有任何问题可以随时咨询我'},
                   {'role': 'user', 'content': message}],
-        stream=True,
-        detail=False
+        stream=True
     )
     result=""
     first = True
