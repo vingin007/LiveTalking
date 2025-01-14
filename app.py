@@ -72,7 +72,7 @@ def llm_response(message,nerfreal):
     from openai import OpenAI
     client = OpenAI(
         api_key="fastgpt-td7lWtN7zdHqROHDXoKbuMXFKcM8Edd91gS1TjgtKDNx06OxmtWHpByR3IiriW",
-        base_url="http://127.0.0.1:3000/v1",
+        base_url="http://127.0.0.1:3000/api/v1",
     )
     end = time.perf_counter()
     print(f"llm Time init: {end-start}s")
@@ -83,6 +83,7 @@ def llm_response(message,nerfreal):
                   {'role': 'user', 'content': message}],
         stream=True
     )
+    print(completion)
     result=""
     first = True
     for chunk in completion:
