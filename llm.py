@@ -3,8 +3,7 @@ import os
 from basereal import BaseReal
 from logger import logger
 
-def llm_response(message,nerfreal):
-    global llm_output_text  # 声明使用全局变量
+def llm_response(message,nerfreal,llm_output_text):
     start = time.perf_counter()
     from openai import OpenAI
     client = OpenAI(

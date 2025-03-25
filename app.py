@@ -179,15 +179,15 @@ async def human(request):
         params['text'] = answers_map[user_text]
 
     # 根据 params['type'] 进行处理
+    global llm_output_text
     if params['type'] == 'echo':
         # echo类型，将text放入队列
-        global llm_output_text
         llm_output_text = params['text']
         nerfreals[sessionid].put_msg_txt(params['text'])
     elif params['type'] == 'chat':
         # chat类型，在线程池中调用llm_response计算
         res = await asyncio.get_event_loop().run_in_executor(
-            None, llm_response, params['text'], nerfreals[sessionid]
+            None, llm_response, params['text'], nerfreals[sessionid],llm_output_text
         )
         # 如果你需要将 LLM 的返回值再放入队列，可以取消下一行的注释
         # nerfreals[sessionid].put_msg_txt(res)
