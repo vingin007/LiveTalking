@@ -35,12 +35,13 @@ import soundfile as sf
 import av
 from fractions import Fraction
 
-from ttsreal import EdgeTTS,VoitsTTS,XTTS,CosyVoiceTTS
+from ttsreal import EdgeTTS,VoitsTTS,XTTS,CosyVoiceTTS,FishTTS,TencentTTS
+from logger import logger
 
 from tqdm import tqdm
 def read_imgs(img_list):
     frames = []
-    print('reading images...')
+    logger.info('reading images...')
     for img_path in tqdm(img_list):
         frame = cv2.imread(img_path)
         frames.append(frame)
@@ -61,6 +62,10 @@ class BaseReal:
             self.tts = XTTS(opt,self)
         elif opt.tts == "cosyvoice":
             self.tts = CosyVoiceTTS(opt,self)
+        elif opt.tts == "fishtts":
+            self.tts = FishTTS(opt,self)
+        elif opt.tts == "tencent":
+            self.tts = TencentTTS(opt,self)
         
         self.speaking = False
 
@@ -77,11 +82,11 @@ class BaseReal:
         self.custom_opt = {}
         self.__loadcustom()
 
-    def put_msg_txt(self,msg):
-        self.tts.put_msg_txt(msg)
+    def put_msg_txt(self,msg,eventpoint=None):
+        self.tts.put_msg_txt(msg,eventpoint)
     
-    def put_audio_frame(self,audio_chunk): #16khz 20ms pcm
-        self.asr.put_audio_frame(audio_chunk)
+    def put_audio_frame(self,audio_chunk,eventpoint=None): #16khz 20ms pcm
+        self.asr.put_audio_frame(audio_chunk,eventpoint)
 
     def put_audio_file(self,filebyte): 
         input_stream = BytesIO(filebyte)
@@ -96,15 +101,15 @@ class BaseReal:
     def __create_bytes_stream(self,byte_stream):
         #byte_stream=BytesIO(buffer)
         stream, sample_rate = sf.read(byte_stream) # [T*sample_rate,] float64
-        print(f'[INFO]put audio stream {sample_rate}: {stream.shape}')
+        logger.info(f'[INFO]put audio stream {sample_rate}: {stream.shape}')
         stream = stream.astype(np.float32)
 
         if stream.ndim > 1:
-            print(f'[WARN] audio has {stream.shape[1]} channels, only use the first.')
+            logger.info(f'[WARN] audio has {stream.shape[1]} channels, only use the first.')
             stream = stream[:, 0]
     
         if sample_rate != self.sample_rate and stream.shape[0]>0:
-            print(f'[WARN] audio sample rate is {sample_rate}, resampling into {self.sample_rate}.')
+            logger.info(f'[WARN] audio sample rate is {sample_rate}, resampling into {self.sample_rate}.')
             stream = resampy.resample(x=stream, sr_orig=sample_rate, sr_new=self.sample_rate)
 
         return stream
@@ -118,7 +123,7 @@ class BaseReal:
     
     def __loadcustom(self):
         for item in self.opt.customopt:
-            print(item)
+            logger.info(item)
             input_img_list = glob.glob(os.path.join(item['imgpath'], '*.[jpJP][pnPN]*[gG]'))
             input_img_list = sorted(input_img_list, key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
             self.custom_img_cycle[item['audiotype']] = read_imgs(input_img_list)
@@ -133,6 +138,9 @@ class BaseReal:
             self.custom_audio_index[key]=0
         for key in self.custom_index:
             self.custom_index[key]=0
+
+    def notify(self,eventpoint):
+        logger.info("notify:%s",eventpoint)
 
     def start_recording(self):
         """开始录制视频"""

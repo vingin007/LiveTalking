@@ -38,10 +38,11 @@ from ernerf.nerf_triplane.utils import *
 from ernerf.nerf_triplane.network import NeRFNetwork
 from transformers import AutoModelForCTC, AutoProcessor, Wav2Vec2Processor, HubertModel
 
+from logger import logger
 from tqdm import tqdm
 def read_imgs(img_list):
     frames = []
-    print('reading images...')
+    logger.info('reading images...')
     for img_path in tqdm(img_list):
         frame = cv2.imread(img_path)
         frames.append(frame)
@@ -74,21 +75,21 @@ def load_model(opt):
         # assert opt.patch_size > 16, "patch_size should > 16 to run LPIPS loss."
         assert opt.num_rays % (opt.patch_size ** 2) == 0, "patch_size ** 2 should be dividable by num_rays."
     seed_everything(opt.seed)
-    print(opt)
+    logger.info(opt)
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else ('mps' if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()) else 'cpu'))
     model = NeRFNetwork(opt)
 
     criterion = torch.nn.MSELoss(reduction='none')
     metrics = [] # use no metric in GUI for faster initialization...
-    print(model)
+    logger.info(model)
     trainer = Trainer('ngp', opt, model, device=device, workspace=opt.workspace, criterion=criterion, fp16=opt.fp16, metrics=metrics, use_checkpoint=opt.ckpt)
 
     test_loader = NeRFDataset_Test(opt, device=device).dataloader()
     model.aud_features = test_loader._data.auds
     model.eye_areas = test_loader._data.eye_area
 
-    print(f'[INFO] loading ASR model {opt.asr_model}...')
+    logger.info(f'[INFO] loading ASR model {opt.asr_model}...')
     if 'hubert' in opt.asr_model:
         audio_processor = Wav2Vec2Processor.from_pretrained(opt.asr_model)
         audio_model = HubertModel.from_pretrained(opt.asr_model).to(device) 
@@ -197,7 +198,7 @@ class NeRFReal(BaseReal):
         '''
 
     def __del__(self):
-        print(f'nerfreal({self.sessionid}) delete')    
+        logger.info(f'nerfreal({self.sessionid}) delete')    
 
     def __enter__(self):
         return self
@@ -235,7 +236,7 @@ class NeRFReal(BaseReal):
         audiotype2 = 0
         #send audio
         for i in range(2):
-            frame,type = self.asr.get_audio_out()
+            frame,type,eventpoint = self.asr.get_audio_out()
             if i==0:
                 audiotype1 = type
             else:
@@ -248,7 +249,7 @@ class NeRFReal(BaseReal):
                 new_frame = AudioFrame(format='s16', layout='mono', samples=frame.shape[0])
                 new_frame.planes[0].update(frame.tobytes())
                 new_frame.sample_rate=16000
-                asyncio.run_coroutine_threadsafe(audio_track._queue.put(new_frame), loop)
+                asyncio.run_coroutine_threadsafe(audio_track._queue.put((new_frame,eventpoint)), loop)
 
         # if self.opt.transport=='rtmp':
         #     for _ in range(2):
@@ -285,7 +286,7 @@ class NeRFReal(BaseReal):
                 self.streamer.stream_frame(image)
             else:
                 new_frame = VideoFrame.from_ndarray(image, format="rgb24")
-                asyncio.run_coroutine_threadsafe(video_track._queue.put(new_frame), loop)
+                asyncio.run_coroutine_threadsafe(video_track._queue.put((new_frame,None)), loop)
         else: #推理视频+贴回
             outputs = self.trainer.test_gui_with_data(data, self.W, self.H)
             #print('-------ernerf time: ',time.time()-t)
@@ -296,7 +297,7 @@ class NeRFReal(BaseReal):
                     self.streamer.stream_frame(image)
                 else:
                     new_frame = VideoFrame.from_ndarray(image, format="rgb24")
-                    asyncio.run_coroutine_threadsafe(video_track._queue.put(new_frame), loop)
+                    asyncio.run_coroutine_threadsafe(video_track._queue.put((new_frame,None)), loop)
             else: #fullbody human
                 #print("frame index:",data['index'])
                 #image_fullbody = cv2.imread(os.path.join(self.opt.fullbody_img, str(data['index'][0])+'.jpg'))
@@ -310,7 +311,7 @@ class NeRFReal(BaseReal):
                     self.streamer.stream_frame(image_fullbody)
                 else:
                     new_frame = VideoFrame.from_ndarray(image_fullbody, format="rgb24")
-                    asyncio.run_coroutine_threadsafe(video_track._queue.put(new_frame), loop)
+                    asyncio.run_coroutine_threadsafe(video_track._queue.put((new_frame,None)), loop)
             #self.pipe.stdin.write(image.tostring())        
        
         #ender.record()
@@ -365,7 +366,7 @@ class NeRFReal(BaseReal):
             count += 1
             _totalframe += 1
             if count==100:
-                print(f"------actual avg infer fps:{count/totaltime:.4f}")
+                logger.info(f"------actual avg infer fps:{count/totaltime:.4f}")
                 count=0
                 totaltime=0
             if self.opt.transport=='rtmp':
@@ -376,6 +377,6 @@ class NeRFReal(BaseReal):
                 if video_track._queue.qsize()>=5:
                     #print('sleep qsize=',video_track._queue.qsize())
                     time.sleep(0.04*video_track._queue.qsize()*0.8)
-        print('nerfreal thread stop')
+        logger.info('nerfreal thread stop')
             
             

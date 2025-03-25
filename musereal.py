@@ -46,11 +46,12 @@ from av import AudioFrame, VideoFrame
 from basereal import BaseReal
 
 from tqdm import tqdm
+from logger import logger
 
 def load_model():
     # load model weights
     audio_processor,vae, unet, pe = load_all_model()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()) else "cpu"))
     timesteps = torch.tensor([0], device=device)
     pe = pe.half()
     vae.vae = vae.vae.half()
@@ -92,7 +93,7 @@ def load_avatar(avatar_id):
 @torch.no_grad()
 def warm_up(batch_size,model):
     # 预热函数
-    print('warmup model...')
+    logger.info('warmup model...')
     vae, unet, pe, timesteps, audio_processor = model
     #batch_size = 16
     #timesteps = torch.tensor([0], device=unet.device)
@@ -110,7 +111,7 @@ def warm_up(batch_size,model):
 
 def read_imgs(img_list):
     frames = []
-    print('reading images...')
+    logger.info('reading images...')
     for img_path in tqdm(img_list):
         frame = cv2.imread(img_path)
         frames.append(frame)
@@ -140,7 +141,7 @@ def inference(render_event,batch_size,input_latent_list_cycle,audio_feat_queue,a
     index = 0
     count=0
     counttime=0
-    print('start inference')
+    logger.info('start inference')
     while render_event.is_set():
         starttime=time.perf_counter()
         try:
@@ -150,8 +151,8 @@ def inference(render_event,batch_size,input_latent_list_cycle,audio_feat_queue,a
         is_all_silence=True
         audio_frames = []
         for _ in range(batch_size*2):
-            frame,type = audio_out_queue.get()
-            audio_frames.append((frame,type))
+            frame,type,eventpoint = audio_out_queue.get()
+            audio_frames.append((frame,type,eventpoint))
             if type==0:
                 is_all_silence=False
         if is_all_silence:
@@ -195,7 +196,7 @@ def inference(render_event,batch_size,input_latent_list_cycle,audio_feat_queue,a
             count += batch_size
             #_totalframe += 1
             if count>=100:
-                print(f"------actual avg infer fps:{count/counttime:.4f}")
+                logger.info(f"------actual avg infer fps:{count/counttime:.4f}")
                 count=0
                 counttime=0
             for i,res_frame in enumerate(recon):
@@ -203,7 +204,7 @@ def inference(render_event,batch_size,input_latent_list_cycle,audio_feat_queue,a
                 res_frame_queue.put((res_frame,__mirror_index(length,index),audio_frames[i*2:i*2+2]))
                 index = index + 1
             #print('total batch time:',time.perf_counter()-starttime)            
-    print('musereal inference processor stop')
+    logger.info('musereal inference processor stop')
 
 class MuseReal(BaseReal):
     @torch.no_grad()
@@ -229,7 +230,7 @@ class MuseReal(BaseReal):
         self.render_event = mp.Event()
 
     def __del__(self):
-        print(f'musereal({self.sessionid}) delete')
+        logger.info(f'musereal({self.sessionid}) delete')
     
 
     def __mirror_index(self, index):
@@ -251,7 +252,7 @@ class MuseReal(BaseReal):
             latent = self.input_latent_list_cycle[idx]
             latent_batch.append(latent)
         latent_batch = torch.cat(latent_batch, dim=0)
-        print('infer=======')
+        logger.info('infer=======')
         # for i, (whisper_batch,latent_batch) in enumerate(gen):
         audio_feature_batch = torch.from_numpy(whisper_batch)
         audio_feature_batch = audio_feature_batch.to(device=self.unet.device,
@@ -301,22 +302,23 @@ class MuseReal(BaseReal):
 
             image = combine_frame #(outputs['image'] * 255).astype(np.uint8)
             new_frame = VideoFrame.from_ndarray(image, format="bgr24")
-            asyncio.run_coroutine_threadsafe(video_track._queue.put(new_frame), loop)
+            asyncio.run_coroutine_threadsafe(video_track._queue.put((new_frame,None)), loop)
             self.record_video_data(image)
             #self.recordq_video.put(new_frame)  
 
             for audio_frame in audio_frames:
-                frame,type = audio_frame
+                frame,type,eventpoint = audio_frame
                 frame = (frame * 32767).astype(np.int16)
                 new_frame = AudioFrame(format='s16', layout='mono', samples=frame.shape[0])
                 new_frame.planes[0].update(frame.tobytes())
                 new_frame.sample_rate=16000
                 # if audio_track._queue.qsize()>10:
                 #     time.sleep(0.1)
-                asyncio.run_coroutine_threadsafe(audio_track._queue.put(new_frame), loop)
+                asyncio.run_coroutine_threadsafe(audio_track._queue.put((new_frame,eventpoint)), loop)
                 self.record_audio_data(frame)
+                #self.notify(eventpoint)
                 #self.recordq_audio.put(new_frame)
-        print('musereal process_frames thread stop') 
+        logger.info('musereal process_frames thread stop') 
             
     def render(self,quit_event,loop=None,audio_track=None,video_track=None):
         #if self.opt.asr:
@@ -348,7 +350,7 @@ class MuseReal(BaseReal):
             #     count=0
             #     totaltime=0
             if video_track._queue.qsize()>=1.5*self.opt.batch_size:
-                print('sleep qsize=',video_track._queue.qsize())
+                logger.debug('sleep qsize=%d',video_track._queue.qsize())
                 time.sleep(0.04*video_track._queue.qsize()*0.8)
             # if video_track._queue.qsize()>=5:
             #     print('sleep qsize=',video_track._queue.qsize())
@@ -358,5 +360,5 @@ class MuseReal(BaseReal):
             # if delay > 0:
             #     time.sleep(delay)
         self.render_event.clear() #end infer process render
-        print('musereal thread stop')
+        logger.info('musereal thread stop')
             

@@ -30,7 +30,7 @@ class NerfASR(BaseASR):
     def __init__(self, opt, parent, audio_processor,audio_model):
         super().__init__(opt,parent)
 
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = "cuda" if torch.cuda.is_available() else ("mps" if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()) else "cpu")
         if 'esperanto' in self.opt.asr_model:
             self.audio_dim = 44
         elif 'deepspeech' in self.opt.asr_model:
@@ -76,20 +76,20 @@ class NerfASR(BaseASR):
         # warm up steps needed: mid + right + window_size + attention_size
         self.warm_up_steps = self.context_size + self.stride_left_size + self.stride_right_size #+ self.stride_left_size   #+ 8 + 2 * 3
 
-    def get_audio_frame(self):         
-        try:
-            frame = self.queue.get(block=False)
-            type = 0
-            #print(f'[INFO] get frame {frame.shape}')
-        except queue.Empty:
-            if self.parent and self.parent.curr_state>1: #播放自定义音频
-                frame = self.parent.get_audio_stream(self.parent.curr_state)
-                type = self.parent.curr_state
-            else:
-                frame = np.zeros(self.chunk, dtype=np.float32)
-                type = 1
+    # def get_audio_frame(self):         
+    #     try:
+    #         frame = self.queue.get(block=False)
+    #         type = 0
+    #         #print(f'[INFO] get frame {frame.shape}')
+    #     except queue.Empty:
+    #         if self.parent and self.parent.curr_state>1: #播放自定义音频
+    #             frame = self.parent.get_audio_stream(self.parent.curr_state)
+    #             type = self.parent.curr_state
+    #         else:
+    #             frame = np.zeros(self.chunk, dtype=np.float32)
+    #             type = 1
 
-        return frame,type
+    #     return frame,type
 
     def get_next_feat(self): #get audio embedding to nerf
         # return a [1/8, 16] window, for the next input to nerf side.
@@ -132,10 +132,10 @@ class NerfASR(BaseASR):
     def run_step(self):
 
         # get a frame of audio
-        frame,type = self.get_audio_frame()
+        frame,type,eventpoint = self.get_audio_frame()
         self.frames.append(frame)
         # put to output
-        self.output_queue.put((frame,type))
+        self.output_queue.put((frame,type,eventpoint))
         # context not enough, do not run network.
         if len(self.frames) < self.stride_left_size + self.context_size + self.stride_right_size:
             return

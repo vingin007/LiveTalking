@@ -33,7 +33,7 @@ from threading import Thread, Event
 import torch.multiprocessing as mp
 
 
-from lightasr import LightASR
+from hubertasr import HubertASR
 import asyncio
 from av import AudioFrame, VideoFrame
 from basereal import BaseReal
@@ -54,12 +54,10 @@ from transformers import Wav2Vec2Processor, HubertModel
 from torch.utils.data import DataLoader
 from ultralight.unet import Model
 from ultralight.audio2feature import Audio2Feature
+from logger import logger
 
-
-
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = "cuda" if torch.cuda.is_available() else ("mps" if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()) else "cpu")
 print('Using {} for inference.'.format(device))
-
 
 def load_model(opt):
     audio_processor = Audio2Feature()
@@ -89,7 +87,7 @@ def load_avatar(avatar_id):
 
 @torch.no_grad()
 def warm_up(batch_size,avatar,modelres):
-    print('warmup model...')
+    logger.info('warmup model...')
     model,_,_,_ = avatar
     img_batch = torch.ones(batch_size, 6, modelres, modelres).to(device)
     mel_batch = torch.ones(batch_size, 32, 32, 32).to(device)
@@ -97,7 +95,7 @@ def warm_up(batch_size,avatar,modelres):
 
 def read_imgs(img_list):
     frames = []
-    print('reading images...')
+    logger.info('reading images...')
     for img_path in tqdm(img_list):
         frame = cv2.imread(img_path)
         frames.append(frame)
@@ -124,7 +122,7 @@ def get_audio_features(features, index):
 
 def read_lms(lms_list):
     land_marks = []
-    print('reading lms...')
+    logger.info('reading lms...')
     for lms_path in tqdm(lms_list):
         file_landmarks = []  # Store landmarks for this file
         with open(lms_path, "r") as f:
@@ -152,7 +150,7 @@ def inference(quit_event, batch_size, face_list_cycle, audio_feat_queue, audio_o
     index = 0
     count = 0
     counttime = 0
-    print('start inference')
+    logger.info('start inference')
 
     while not quit_event.is_set():
         starttime=time.perf_counter()
@@ -163,8 +161,8 @@ def inference(quit_event, batch_size, face_list_cycle, audio_feat_queue, audio_o
         is_all_silence=True
         audio_frames = []
         for _ in range(batch_size*2):
-            frame,type_ = audio_out_queue.get()
-            audio_frames.append((frame,type_))
+            frame,type_,eventpoint = audio_out_queue.get()
+            audio_frames.append((frame,type_,eventpoint))
             if type_==0:
                 is_all_silence=False
         if is_all_silence:
@@ -206,7 +204,7 @@ def inference(quit_event, batch_size, face_list_cycle, audio_feat_queue, audio_o
             counttime += (time.perf_counter() - t)
             count += batch_size
             if count >= 100:
-                print(f"------actual avg infer fps:{count / counttime:.4f}")
+                logger.info(f"------actual avg infer fps:{count / counttime:.4f}")
                 count = 0
                 counttime = 0
             for i,res_frame in enumerate(pred):
@@ -221,7 +219,7 @@ def inference(quit_event, batch_size, face_list_cycle, audio_feat_queue, audio_o
 
         #print('total batch time:', time.perf_counter() - starttime)
 
-    print('lightreal inference processor stop')
+    logger.info('lightreal inference processor stop')
 
 
 class LightReal(BaseReal):
@@ -241,14 +239,14 @@ class LightReal(BaseReal):
         audio_processor = model
         self.model,self.frame_list_cycle,self.face_list_cycle,self.coord_list_cycle = avatar
 
-        self.asr = LightASR(opt,self,audio_processor)
+        self.asr = HubertASR(opt,self,audio_processor)
         self.asr.warm_up()
         #self.__warm_up()
         
         self.render_event = mp.Event()
     
     def __del__(self):
-        print(f'lightreal({self.sessionid}) delete')
+        logger.info(f'lightreal({self.sessionid}) delete')
 
    
     def process_frames(self,quit_event,loop=None,audio_track=None,video_track=None):
@@ -288,20 +286,21 @@ class LightReal(BaseReal):
                 #print('blending time:',time.perf_counter()-t)
 
             new_frame = VideoFrame.from_ndarray(combine_frame, format="bgr24")
-            asyncio.run_coroutine_threadsafe(video_track._queue.put(new_frame), loop)
+            asyncio.run_coroutine_threadsafe(video_track._queue.put((new_frame,None)), loop)
             self.record_video_data(combine_frame)
 
             for audio_frame in audio_frames:
-                frame,type_ = audio_frame
+                frame,type_,eventpoint = audio_frame
                 frame = (frame * 32767).astype(np.int16)
                 new_frame = AudioFrame(format='s16', layout='mono', samples=frame.shape[0])
                 new_frame.planes[0].update(frame.tobytes())
                 new_frame.sample_rate=16000
                 # if audio_track._queue.qsize()>10:
                 #     time.sleep(0.1)
-                asyncio.run_coroutine_threadsafe(audio_track._queue.put(new_frame), loop)
+                asyncio.run_coroutine_threadsafe(audio_track._queue.put((new_frame,eventpoint)), loop)
                 self.record_audio_data(frame)
-        print('lightreal process_frames thread stop') 
+                #self.notify(eventpoint)
+        logger.info('lightreal process_frames thread stop') 
             
     def render(self,quit_event,loop=None,audio_track=None,video_track=None):
         #if self.opt.asr:
@@ -330,13 +329,13 @@ class LightReal(BaseReal):
             #     print('sleep qsize=',video_track._queue.qsize())
             #     time.sleep(0.04*video_track._queue.qsize()*0.8)
             if video_track._queue.qsize()>=5:
-                print('sleep qsize=',video_track._queue.qsize())
+                logger.debug('sleep qsize=%d',video_track._queue.qsize())
                 time.sleep(0.04*video_track._queue.qsize()*0.8)
                 
             # delay = _starttime+_totalframe*0.04-time.perf_counter() #40ms
             # if delay > 0:
             #     time.sleep(delay)
         #self.render_event.clear() #end infer process render
-        print('lightreal thread stop')
+        logger.info('lightreal thread stop')
             
 

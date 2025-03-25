@@ -42,6 +42,7 @@ from aiortc import (
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)
+from logger import logger as mylogger
 
 
 class PlayerStreamTrack(MediaStreamTrack):
@@ -82,7 +83,7 @@ class PlayerStreamTrack(MediaStreamTrack):
                 self._start = time.time()
                 self._timestamp = 0
                 self.timelist.append(self._start)
-                print('video start:',self._start)
+                mylogger.info('video start:%f',self._start)
             return self._timestamp, VIDEO_TIME_BASE
         else: #audio
             if hasattr(self, "_timestamp"):
@@ -100,7 +101,7 @@ class PlayerStreamTrack(MediaStreamTrack):
                 self._start = time.time()
                 self._timestamp = 0
                 self.timelist.append(self._start)
-                print('audio start:',self._start)
+                mylogger.info('audio start:%f',self._start)
             return self._timestamp, AUDIO_TIME_BASE
 
     async def recv(self) -> Union[Frame, Packet]:
@@ -122,10 +123,12 @@ class PlayerStreamTrack(MediaStreamTrack):
         #             frame = await self._queue.get()
         #     else:
         #         frame = await self._queue.get()
-        frame = await self._queue.get()
+        frame,eventpoint = await self._queue.get()
         pts, time_base = await self.next_timestamp()
         frame.pts = pts
         frame.time_base = time_base
+        if eventpoint:
+            self._player.notify(eventpoint)
         if frame is None:
             self.stop()
             raise Exception
@@ -134,7 +137,7 @@ class PlayerStreamTrack(MediaStreamTrack):
             self.framecount += 1
             self.lasttime = time.perf_counter()
             if self.framecount==100:
-                print(f"------actual avg final fps:{self.framecount/self.totaltime:.4f}")
+                mylogger.info(f"------actual avg final fps:{self.framecount/self.totaltime:.4f}")
                 self.framecount = 0
                 self.totaltime=0
         return frame
@@ -172,6 +175,8 @@ class HumanPlayer:
 
         self.__container = nerfreal
 
+    def notify(self,eventpoint):
+        self.__container.notify(eventpoint)
 
     @property
     def audio(self) -> MediaStreamTrack:
@@ -219,4 +224,4 @@ class HumanPlayer:
             self.__container = None
 
     def __log_debug(self, msg: str, *args) -> None:
-        logger.debug(f"HumanPlayer {msg}", *args)
+        mylogger.debug(f"HumanPlayer {msg}", *args)
