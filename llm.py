@@ -14,9 +14,7 @@ def llm_response(message,nerfreal,llm_output_text):
     print(f"llm Time init: {end-start}s")
     completion = client.chat.completions.create(
         model="qwen2.5-instruct",
-        messages=[{'role': 'system',
-                   'content': '我是延长石油气田公司的虚拟人:气小田，很高兴为您服务，我能够给您接到关于气田公司内部的问题，您有任何问题可以随时咨询我'},
-                  {'role': 'user', 'content': message}],
+        messages=[{'role': 'user', 'content': message}],
         stream=True
     )
     print(message)
