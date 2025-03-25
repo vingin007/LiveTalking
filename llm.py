@@ -7,7 +7,7 @@ def llm_response(message,nerfreal,llm_output_text):
     start = time.perf_counter()
     from openai import OpenAI
     client = OpenAI(
-        api_key="fastgpt-td7lWtN7zdHqROHDXoKbuMXFKcM8Edd91gS1TjgtKDNx06OxmtWHpByR3IiriW",
+        api_key="fastgpt-sKtHWqHNMceIby5WXc2k03EhHoOfjfmD83ELjZ9wbOpGBx8b4YqkhC",
         base_url="http://127.0.0.1:3000/api/v1",
     )
     end = time.perf_counter()
