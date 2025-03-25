@@ -21,6 +21,7 @@ def llm_response(message,nerfreal):
         stream=True,
         stream_options={"include_usage": True}
     )
+    print(message)
     print(completion)
     result=""
     first = True
