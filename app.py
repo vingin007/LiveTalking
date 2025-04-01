@@ -74,7 +74,7 @@ def llm_response(message,nerfreal):
                    'content': '我是延长石油气田公司的虚拟人:气小田，很高兴为您服务，我能够给您接到关于气田公司内部的问题，您有任何问题可以随时咨询我'},
                   {'role': 'user', 'content': message}],
         stream=True,
-        extra_body={'chatId': 'chat1'}  # 在这里传入额外的参数
+        extra_body={'chatId': 'chat'}  # 在这里传入额外的参数
     )
     print(message)
     print(completion)
