@@ -99,9 +99,8 @@ def llm_response(message, nerfreal):
                     lastpos = i + 1
                     if len(result) > 10:
                         # 判断并去除markdown标题风格的“-”
-                        result = re.sub(r'^-\s*', '', result)
+                        result = re.sub(r'(^|(?<=\n))-\s+', '', result)
                         print(result)
-                        print("---------")
                         nerfreal.put_msg_txt(result)
                         # 累加到全局变量
                         llm_output_text += result
