@@ -58,7 +58,8 @@ llm_output_text = ""
 #####webrtc###############################
 pcs = set()
 
-def llm_response(message,nerfreal):
+
+def llm_response(message, nerfreal):
     global llm_output_text  # 声明使用全局变量
     start = time.perf_counter()
     from openai import OpenAI
@@ -67,7 +68,7 @@ def llm_response(message,nerfreal):
         base_url="http://127.0.0.1:3000/api/v1",
     )
     end = time.perf_counter()
-    print(f"llm Time init: {end-start}s")
+    print(f"llm Time init: {end - start}s")
     completion = client.chat.completions.create(
         model="qwen2.5-instruct",
         messages=[{'role': 'system',
@@ -78,35 +79,38 @@ def llm_response(message,nerfreal):
     )
     print(message)
     print(completion)
-    result=""
+    result = ""
     first = True
     for chunk in completion:
-        if len(chunk.choices)>0:
+        if len(chunk.choices) > 0:
             #print(chunk.choices[0].delta.content)
             msg = chunk.choices[0].delta.content
             if msg is None:
                 continue  # 跳过本次循环，继续下一个 chunk
             if first:
                 end = time.perf_counter()
-                print(f"llm Time to first chunk: {end-start}s")
+                print(f"llm Time to first chunk: {end - start}s")
                 first = False
-            lastpos=0
+            lastpos = 0
             #msglist = re.split('[,.!;:，。！?]',msg)
             for i, char in enumerate(msg):
-                if char in ",.!;:，。！？：；" :
-                    result = result+msg[lastpos:i+1]
-                    lastpos = i+1
-                    if len(result)>10:
+                if char in ",.!;:，。！？：；":
+                    result = result + msg[lastpos:i + 1]
+                    lastpos = i + 1
+                    if len(result) > 10:
+                        # 判断并去除markdown标题风格的“-”
+                        result = re.sub(r'^-\s*', '', result)
                         print(result)
                         nerfreal.put_msg_txt(result)
                         # 累加到全局变量
                         llm_output_text += result
-                        result=""
-            result = result+msg[lastpos:]
+                        result = ""
+            result = result + msg[lastpos:]
     end = time.perf_counter()
-    print(f"llm Time to last chunk: {end-start}s")
+    print(f"llm Time to last chunk: {end - start}s")
     llm_output_text += result
     nerfreal.put_msg_txt(result)
+
 
 def randN(N) -> int:
     '''生成长度为 N的随机数 '''
@@ -207,6 +211,20 @@ async def load_answers_from_json():
         return json.load(f)
 
 
+async def stop(request):
+    params = await request.json()
+    sessionid = params.get('sessionid', 0)
+    # 重置对话
+    nerfreals[sessionid].flush_talk()
+    #清空llm
+    global llm_output_text
+    if llm_output_text:
+        llm_output_text = ""  # 读取后清空变量
+        return web.json_response({'status': 'success', 'data': ''})
+    else:
+        return web.json_response({'status': 'empty', 'data': ''})
+
+
 async def human(request):
     # 读取请求体
     params = await request.json()
@@ -246,7 +264,6 @@ async def human(request):
         content_type="application/json",
         text=json.dumps({"code": 0, "data": "ok"}, ensure_ascii=False)
     )
-
 
 
 async def humanaudio(request):
@@ -576,6 +593,7 @@ if __name__ == '__main__':
     appasync.on_shutdown.append(on_shutdown)
     appasync.router.add_post("/offer", offer)
     appasync.router.add_post("/human", human)
+    appasync.router.add_post("/stop", stop)
     appasync.router.add_post("/humanaudio", humanaudio)
     appasync.router.add_post("/set_audiotype", set_audiotype)
     appasync.router.add_post("/record", record)
