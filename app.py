@@ -212,11 +212,11 @@ async def load_answers_from_json():
 
 
 async def stop(request):
-    params = await request.json()
-    sessionid = params.get('sessionid', 0)
+    # 如果 sessionid 是通过 URL 参数传入
+    sessionid = int(request.rel_url.query.get('sessionid', 0))
     # 重置对话
     nerfreals[sessionid].flush_talk()
-    #清空llm
+    # 清空 llm
     global llm_output_text
     if llm_output_text:
         llm_output_text = ""  # 读取后清空变量
