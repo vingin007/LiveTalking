@@ -410,6 +410,7 @@ async def run(push_url, sessionid):
 # os.environ['MULTIPROCESSING_METHOD'] = 'forkserver'
 if __name__ == '__main__':
     mp.set_start_method('spawn')
+    sse_queues[0] = asyncio.Queue()
     parser = argparse.ArgumentParser()
     parser.add_argument('--pose', type=str, default="data/data_kf.json", help="transforms.json, pose source")
     parser.add_argument('--au', type=str, default="data/au.csv", help="eye blink area")
