@@ -54,6 +54,7 @@ model = None
 avatar = None
 # 定义全局变量
 llm_output_text = ""
+sse_queues = {0: asyncio.Queue()}
 
 #####webrtc###############################
 pcs = set()
@@ -223,7 +224,40 @@ async def stop(request):
     else:
         return web.json_response({'status': 'empty', 'data': ''})
 
+async def sse_handler(request):
+    if 0 not in sse_queues:
+        return web.Response(status=400, text="Queue not found.")
 
+    resp = web.StreamResponse(
+        status=200,
+        reason="OK",
+        headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            # 不要手动设置 Access-Control-Allow-Origin，与 aiohttp_cors 冲突
+        }
+    )
+    await resp.prepare(request)
+
+    queue = sse_queues[0]
+
+    try:
+        while True:
+            msg = await queue.get()
+            if msg == "_done_":
+                # 向前端发送 event: done
+                done_chunk = "event: done\ndata: [DONE]\n\n"
+                await resp.write(done_chunk.encode("utf-8"))
+                break
+
+            data = f"event: message\ndata: {msg}\n\n"
+            await resp.write(data.encode("utf-8"))
+            await resp.drain()
+        await resp.write_eof()
+    except asyncio.CancelledError:
+        pass
+
+    return resp
 async def human(request):
     # 读取请求体
     params = await request.json()
@@ -598,7 +632,7 @@ if __name__ == '__main__':
     appasync.router.add_post("/record", record)
     appasync.router.add_post("/is_speaking", is_speaking)
     appasync.router.add_static('/', path='web')
-    appasync.router.add_get("/get_llm_output", get_llm_output)
+    appasync.router.add_get("/sse", sse_handler)
 
     # Configure default CORS settings.
     cors = aiohttp_cors.setup(appasync, defaults={

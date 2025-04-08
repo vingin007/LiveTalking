@@ -27,6 +27,8 @@ from av import AudioFrame
 import fractions
 import numpy as np
 
+from app import sse_queues
+
 AUDIO_PTIME = 0.020  # 20ms audio packetization
 VIDEO_CLOCK_RATE = 90000
 VIDEO_PTIME = 1 / 25  # 30fps
@@ -104,6 +106,14 @@ class PlayerStreamTrack(MediaStreamTrack):
                 mylogger.info('audio start:%f',self._start)
             return self._timestamp, AUDIO_TIME_BASE
 
+    async def handle_eventpoint(self, ep: dict):
+        # ep = {"status":"start", "text":"xxxx"} or {"status":"end", ...}
+        # SSE 推送
+        if 0 in sse_queues:
+            text = ep.get("text", "")
+            status = ep.get("status", "")
+            msg = f"[{status}] {text}"
+            await sse_queues[0].put(msg)
     async def recv(self) -> Union[Frame, Packet]:
         # frame = self.frames[self.counter % 30]            
         self._player._start(self)
@@ -129,6 +139,7 @@ class PlayerStreamTrack(MediaStreamTrack):
         frame.time_base = time_base
         if eventpoint:
             self._player.notify(eventpoint)
+            await self.handle_eventpoint(eventpoint)
         if frame is None:
             self.stop()
             raise Exception
