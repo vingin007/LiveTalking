@@ -63,53 +63,60 @@ pcs = set()
 import asyncio, re, time
 
 
+sse_queues = {0: asyncio.Queue()}  # 单会话示例
+llm_output_text = ""
+
 async def async_llm_response(message: str, nerfreal):
     global llm_output_text
-
     start_time = time.perf_counter()
 
-    #------------------------------------------------------------------
-    # 1) 初始化阻塞式 LLM 客户端
-    #   这里演示 fastGPT / openAI "stream=True" 的写法
-    #   如果你的 LLM 客户端不同，可自行调整
-    #------------------------------------------------------------------
+    # 1) 初始化 LLM 客户端
     from openai import OpenAI
     client = OpenAI(
-        api_key="fastgpt-xHpTzO9fs2BtTnMvBYDsN8LxXRH7Siykrzd7aQF3cwTFDnmn6jllGNQj2ujKyjH",
+        api_key="fastgpt-xxxxxx",
         base_url="http://127.0.0.1:3000/api/v1",
     )
 
-    #------------------------------------------------------------------
-    # 2) 定义一个同步生成器，yield 每个 chunk
-    #------------------------------------------------------------------
+    # 2) 定义一个阻塞式“同步生成器”，yield 每个 chunk
     def blocking_generator(user_text):
         t0 = time.perf_counter()
         completion = client.chat.completions.create(
             model="qwen2.5-instruct",
             messages=[
-                {'role': 'system',
-                   'content': '我是延长石油气田公司的虚拟人:气小田，很高兴为您服务，我能够给您接到关于气田公司内部的问题，您有任何问题可以随时咨询我'},
-                  {'role': 'user', 'content': message}],
+                {
+                    'role': 'system',
+                    'content': '我是延长石油气田公司的虚拟人:气小田...'
+                },
+                {
+                    'role': 'user',
+                    'content': user_text
+                }
+            ],
             stream=True,
             extra_body={"chatId": "chat5"}
         )
         t1 = time.perf_counter()
         print(f"[blocking_generator] init time: {t1 - t0:.2f}s")
 
+        # 关键：要真正 yield chunk，才能在主协程里拿到分块
         for chunk in completion:
             yield chunk
 
+    # 3) 用一个异步队列 bridge 后台线程 -> 主协程
     loop = asyncio.get_running_loop()
     queue = asyncio.Queue()
 
     def run_blocking():
-        """后台线程：阻塞式取 chunk -> queue"""
+        """在后台线程，阻塞地读取 chunk -> 放到queue"""
         for chk in blocking_generator(message):
             loop.call_soon_threadsafe(queue.put_nowait, chk)
+        # 读完后再放个 _done_ 标记
         loop.call_soon_threadsafe(queue.put_nowait, "_done_")
 
+    # 在线程池中执行 run_blocking
     loop.run_in_executor(None, run_blocking)
 
+    # 4) 主协程里不断从 queue 拿 chunk，分段处理
     first_chunk = True
     result_cache = ""
 
@@ -119,43 +126,49 @@ async def async_llm_response(message: str, nerfreal):
             print("[async_llm_response] streaming finished.")
             break
 
-        if not chunk or not chunk.get("choices"):
+        # ---- 注意：chunk 这里是 ChatCompletionChunk 对象 ----
+        # 所以不能用 chunk.get("choices")
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+        if not delta:
+            continue
+        msg = delta.content
+        if not msg:
             continue
 
-        # chunk 形如: { "choices": [ { "delta": { "content": "xxx" } } ] }
-        delta = chunk["choices"][0].get("delta", {})
-        msg = delta.get("content")
-        if msg is None:
-            continue
-
+        # 第一次统计时间
         if first_chunk:
             dt = time.perf_counter() - start_time
             print(f"Time to first chunk: {dt:.2f}s")
             first_chunk = False
 
-        # 分句逻辑：每遇到标点就发一段
+        # --- 分句逻辑：遇到标点就输出一段 ---
         lastpos = 0
         for i, ch in enumerate(msg):
             if ch in ",.!;:，。！？：；":
                 result_cache += msg[lastpos : i+1]
                 lastpos = i + 1
 
-                # 如果累积到一定长度则发送
                 if len(result_cache) > 10:
-                    # 去除 markdown 标题风格的 "-"
+                    # 去掉 markdown 标题风格的 "-"
                     result_cache = re.sub(r'(?m)^[ \t]*-\s+', '', result_cache)
 
-                    # 1) 发送到 "nerfreal"
+                    # 1) 推给 nerfreal
                     nerfreal.put_msg_txt(result_cache)
-                    # 2) 累加到全局字符串
+
+                    # 2) 累加到全局
                     llm_output_text += result_cache
+
                     # 3) SSE 推送
                     if 0 in sse_queues:
                         await sse_queues[0].put(result_cache)
 
                     result_cache = ""
+        # 处理剩余
         result_cache += msg[lastpos:]
 
+    # 5) 如果还剩余结果未输出，也发出去
     if result_cache:
         result_cache = re.sub(r'(?m)^[ \t]*-\s+', '', result_cache)
         nerfreal.put_msg_txt(result_cache)
@@ -163,12 +176,11 @@ async def async_llm_response(message: str, nerfreal):
         if 0 in sse_queues:
             await sse_queues[0].put(result_cache)
 
-    # 最后给 SSE 一个 "_done_" 结束标记
+    # 最后给 SSE 一个 "_done_" 标记
     if 0 in sse_queues:
         await sse_queues[0].put("_done_")
 
-    dt = time.perf_counter() - start_time
-    print(f"Time to last chunk: {dt:.2f}s")
+    dt2 = time.perf_counter() - start_time
 
 async def sse_handler(request):
     if 0 not in sse_queues:
