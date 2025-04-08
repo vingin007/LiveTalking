@@ -47,18 +47,20 @@ from typing import Dict
 from logger import logger
 
 app = Flask(__name__)
-sse_queues: Dict[int, asyncio.Queue] = {}  # 每个 sessionid -> 一个 asyncio.Queue
 #sockets = Sockets(app)
 nerfreals: Dict[int, BaseReal] = {}  #sessionid:BaseReal
 opt = None
 model = None
 avatar = None
+# 定义全局变量
+llm_output_text = ""
 
 #####webrtc###############################
 pcs = set()
 
 
 def llm_response(message, nerfreal):
+    global llm_output_text  # 声明使用全局变量
     start = time.perf_counter()
     from openai import OpenAI
     client = OpenAI(
@@ -97,66 +99,18 @@ def llm_response(message, nerfreal):
                     lastpos = i + 1
                     if len(result) > 10:
                         # 判断并去除markdown标题风格的“-”
-                        asyncio.run_coroutine_threadsafe(
-                            sse_queues[0].put(msg),
-                            asyncio.get_event_loop()
-                        )
+                        llm_output_text += result
                         result = re.sub(r'(?m)^[ \t]*-\s+', '', result)
                         print(result)
                         nerfreal.put_msg_txt(result)
                         # 累加到全局变量
                         result = ""
             result = result + msg[lastpos:]
-    # 所有 chunk 结束后，标记 done
-    asyncio.run_coroutine_threadsafe(
-        sse_queues[0].put("_done_"),
-        asyncio.get_event_loop()
-    )
     end = time.perf_counter()
     print(f"llm Time to last chunk: {end - start}s")
+    llm_output_text += result
     nerfreal.put_msg_txt(result)
 
-async def sse_handler(request):
-    sessionid = 0
-
-    if sessionid not in sse_queues:
-        return web.Response(status=400, text="Invalid sessionid")
-
-    # 初始化 SSE 响应头
-    response = web.StreamResponse(
-        status=200,
-        reason='OK',
-        headers={
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache'
-        }
-    )
-    await response.prepare(request)
-
-    queue = sse_queues[sessionid]
-
-    try:
-        while True:
-            # 等待 LLM 的文本分片
-            chunk = await queue.get()
-            if chunk == "_done_":
-                # 发送一个 "done" 事件或者直接断流
-                data = "event: done\ndata: [DONE]\n\n"
-                await response.write(data.encode('utf-8'))
-                break
-
-            # 以 SSE 格式推送普通文本
-            data = f"event: message\ndata: {chunk}\n\n"
-            await response.write(data.encode('utf-8'))
-            await response.drain()  # 主动flush
-
-        # done 后可选择立即关闭 SSE
-        await response.write_eof()
-    except asyncio.CancelledError:
-        # 如果客户端断开会触发此异常
-        pass
-
-    return response
 
 def randN(N) -> int:
     '''生成长度为 N的随机数 '''
@@ -166,10 +120,6 @@ def randN(N) -> int:
 
 
 def build_nerfreal(sessionid: int) -> BaseReal:
-    # 这里加上 SSE 队列的初始化
-    if sessionid not in sse_queues:
-        sse_queues[sessionid] = asyncio.Queue()
-
     opt.sessionid = sessionid
     if opt.model == 'wav2lip':
         from lipreal import LipReal
@@ -239,6 +189,18 @@ async def offer(request):
     )
 
 
+async def get_llm_output(request):
+    global llm_output_text
+    try:
+        if llm_output_text:
+            response = llm_output_text
+            llm_output_text = ""  # 读取后清空变量
+            return web.json_response({'status': 'success', 'data': response})
+        else:
+            return web.json_response({'status': 'empty', 'data': ''})
+    except Exception as e:
+        return web.json_response({'status': 'error', 'message': 'Internal Server Error'}, status=500)
+
 
 async def load_answers_from_json():
     """
@@ -250,17 +212,17 @@ async def load_answers_from_json():
 
 
 async def stop(request):
-    # 如果 sessionid 是通过 URL 参数传入
-    sessionid = int(request.rel_url.query.get('sessionid', 0))
-    if sessionid in nerfreals:
-        nerfreals[sessionid].flush_talk()
-
-    if sessionid in sse_queues:
-        asyncio.run_coroutine_threadsafe(
-            sse_queues[sessionid].put("_done_"),
-            asyncio.get_event_loop()
-        )
-    return web.json_response({"status": "stopped"})
+    params = await request.json()
+    sessionid = params.get('sessionid', 0)
+    # 重置对话
+    nerfreals[sessionid].flush_talk()
+    #清空llm
+    global llm_output_text
+    if llm_output_text:
+        llm_output_text = ""  # 读取后清空变量
+        return web.json_response({'status': 'success', 'data': ''})
+    else:
+        return web.json_response({'status': 'empty', 'data': ''})
 
 
 async def human(request):
@@ -286,19 +248,9 @@ async def human(request):
     # 根据 params['type'] 进行处理
     if params['type'] == 'echo':
         # echo类型，将text放入队列
-        # 直接把这段文本塞到 SSE + 口型那边
-        asyncio.run_coroutine_threadsafe(
-            sse_queues[sessionid].put(user_text),
-            asyncio.get_event_loop()
-        )
-        # 也塞给 nerfreals
+        global llm_output_text
+        llm_output_text = params['text']
         nerfreals[sessionid].put_msg_txt(params['text'])
-        # 最后发送 _done_ 结束
-        asyncio.run_coroutine_threadsafe(
-            sse_queues[sessionid].put("_done_"),
-            asyncio.get_event_loop()
-        )
-
     elif params['type'] == 'chat':
         # chat类型，在线程池中调用llm_response计算
         res = await asyncio.get_event_loop().run_in_executor(
@@ -644,11 +596,10 @@ if __name__ == '__main__':
     appasync.router.add_post("/stop", stop)
     appasync.router.add_post("/humanaudio", humanaudio)
     appasync.router.add_post("/set_audiotype", set_audiotype)
-    appasync.router.add_get("/sse", sse_handler)
     appasync.router.add_post("/record", record)
     appasync.router.add_post("/is_speaking", is_speaking)
     appasync.router.add_static('/', path='web')
-
+    appasync.router.add_get("/get_llm_output", get_llm_output)
 
     # Configure default CORS settings.
     cors = aiohttp_cors.setup(appasync, defaults={
