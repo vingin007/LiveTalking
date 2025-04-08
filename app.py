@@ -128,8 +128,7 @@ async def sse_handler(request):
         reason='OK',
         headers={
             'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'no-cache'
         }
     )
     await response.prepare(request)
