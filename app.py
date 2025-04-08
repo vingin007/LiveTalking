@@ -67,7 +67,7 @@ async def async_llm_response(message: str, nerfreal):
     # 1) 初始化 LLM 客户端
     from openai import OpenAI
     client = OpenAI(
-        api_key="fastgpt-xxxxxx",
+        api_key="fastgpt-xHpTzO9fs2BtTnMvBYDsN8LxXRH7Siykrzd7aQF3cwTFDnmn6jllGNQj2ujKyjH",
         base_url="http://127.0.0.1:3000/api/v1",
     )
 
@@ -94,6 +94,7 @@ async def async_llm_response(message: str, nerfreal):
 
         # 关键：要真正 yield chunk，才能在主协程里拿到分块
         for chunk in completion:
+            print("[DEBUG chunk]", chunk)
             yield chunk
 
     # 3) 用一个异步队列 bridge 后台线程 -> 主协程
