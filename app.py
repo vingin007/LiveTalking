@@ -649,7 +649,7 @@ if __name__ == '__main__':
     appasync.router.add_post("/record", record)
     appasync.router.add_post("/is_speaking", is_speaking)
     appasync.router.add_static('/', path='web')
-    appasync.router.add_get("/get_llm_output", get_llm_output)
+
 
     # Configure default CORS settings.
     cors = aiohttp_cors.setup(appasync, defaults={
