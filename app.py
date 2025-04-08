@@ -60,12 +60,6 @@ llm_output_text = ""
 pcs = set()
 
 
-import asyncio, re, time
-
-
-sse_queues = {0: asyncio.Queue()}  # 单会话示例
-llm_output_text = ""
-
 async def async_llm_response(message: str, nerfreal):
     global llm_output_text
     start_time = time.perf_counter()
