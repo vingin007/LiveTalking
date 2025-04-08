@@ -45,6 +45,7 @@ import asyncio
 import torch
 from typing import Dict
 from logger import logger
+from sse_manager import sse_queues
 
 app = Flask(__name__)
 #sockets = Sockets(app)
@@ -54,7 +55,6 @@ model = None
 avatar = None
 # 定义全局变量
 llm_output_text = ""
-sse_queues = {0: asyncio.Queue()}
 
 #####webrtc###############################
 pcs = set()

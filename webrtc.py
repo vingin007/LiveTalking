@@ -26,8 +26,7 @@ from av.packet import Packet
 from av import AudioFrame
 import fractions
 import numpy as np
-
-from app import sse_queues
+from sse_manager import sse_queues
 
 AUDIO_PTIME = 0.020  # 20ms audio packetization
 VIDEO_CLOCK_RATE = 90000
