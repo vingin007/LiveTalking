@@ -53,7 +53,7 @@ opt = None
 model = None
 avatar = None
 # 定义全局变量
-sse_queues: Dict[int, asyncio.Queue] = {}
+sse_queues = {0: asyncio.Queue()}
 llm_output_text = ""
 
 #####webrtc###############################
