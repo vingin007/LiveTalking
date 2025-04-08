@@ -120,14 +120,14 @@ async def async_llm_response(message: str, nerfreal):
             print("[async_llm_response] streaming finished.")
             break
 
-        # ---- 注意：chunk 这里是 ChatCompletionChunk 对象 ----
-        # 所以不能用 chunk.get("choices")
+
         if not chunk.choices:
             continue
         delta = chunk.choices[0].delta
         if not delta:
             continue
         msg = delta.content
+        print(msg)
         if not msg:
             continue
 
@@ -185,8 +185,7 @@ async def sse_handler(request):
         reason="OK",
         headers={
             "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            # 不要手动设置 Access-Control-Allow-Origin，与 aiohttp_cors 冲突
+            "Cache-Control": "no-cache"
         }
     )
     await resp.prepare(request)
