@@ -53,63 +53,157 @@ opt = None
 model = None
 avatar = None
 # 定义全局变量
+sse_queues: Dict[int, asyncio.Queue] = {}
 llm_output_text = ""
 
 #####webrtc###############################
 pcs = set()
 
 
-def llm_response(message, nerfreal):
-    global llm_output_text  # 声明使用全局变量
-    start = time.perf_counter()
+import asyncio, re, time
+
+
+async def async_llm_response(message: str, nerfreal):
+    global llm_output_text
+
+    start_time = time.perf_counter()
+
+    #------------------------------------------------------------------
+    # 1) 初始化阻塞式 LLM 客户端
+    #   这里演示 fastGPT / openAI "stream=True" 的写法
+    #   如果你的 LLM 客户端不同，可自行调整
+    #------------------------------------------------------------------
     from openai import OpenAI
     client = OpenAI(
         api_key="fastgpt-xHpTzO9fs2BtTnMvBYDsN8LxXRH7Siykrzd7aQF3cwTFDnmn6jllGNQj2ujKyjH",
         base_url="http://127.0.0.1:3000/api/v1",
     )
-    end = time.perf_counter()
-    print(f"llm Time init: {end - start}s")
-    completion = client.chat.completions.create(
-        model="qwen2.5-instruct",
-        messages=[{'role': 'system',
+
+    #------------------------------------------------------------------
+    # 2) 定义一个同步生成器，yield 每个 chunk
+    #------------------------------------------------------------------
+    def blocking_generator(user_text):
+        t0 = time.perf_counter()
+        completion = client.chat.completions.create(
+            model="qwen2.5-instruct",
+            messages=[
+                {'role': 'system',
                    'content': '我是延长石油气田公司的虚拟人:气小田，很高兴为您服务，我能够给您接到关于气田公司内部的问题，您有任何问题可以随时咨询我'},
                   {'role': 'user', 'content': message}],
-        stream=True,
-        extra_body={'chatId': 'chat5'}  # 在这里传入额外的参数
+            stream=True,
+            extra_body={"chatId": "chat5"}
+        )
+        t1 = time.perf_counter()
+        print(f"[blocking_generator] init time: {t1 - t0:.2f}s")
+
+        for chunk in completion:
+            yield chunk
+
+    loop = asyncio.get_running_loop()
+    queue = asyncio.Queue()
+
+    def run_blocking():
+        """后台线程：阻塞式取 chunk -> queue"""
+        for chk in blocking_generator(message):
+            loop.call_soon_threadsafe(queue.put_nowait, chk)
+        loop.call_soon_threadsafe(queue.put_nowait, "_done_")
+
+    loop.run_in_executor(None, run_blocking)
+
+    first_chunk = True
+    result_cache = ""
+
+    while True:
+        chunk = await queue.get()
+        if chunk == "_done_":
+            print("[async_llm_response] streaming finished.")
+            break
+
+        if not chunk or not chunk.get("choices"):
+            continue
+
+        # chunk 形如: { "choices": [ { "delta": { "content": "xxx" } } ] }
+        delta = chunk["choices"][0].get("delta", {})
+        msg = delta.get("content")
+        if msg is None:
+            continue
+
+        if first_chunk:
+            dt = time.perf_counter() - start_time
+            print(f"Time to first chunk: {dt:.2f}s")
+            first_chunk = False
+
+        # 分句逻辑：每遇到标点就发一段
+        lastpos = 0
+        for i, ch in enumerate(msg):
+            if ch in ",.!;:，。！？：；":
+                result_cache += msg[lastpos : i+1]
+                lastpos = i + 1
+
+                # 如果累积到一定长度则发送
+                if len(result_cache) > 10:
+                    # 去除 markdown 标题风格的 "-"
+                    result_cache = re.sub(r'(?m)^[ \t]*-\s+', '', result_cache)
+
+                    # 1) 发送到 "nerfreal"
+                    nerfreal.put_msg_txt(result_cache)
+                    # 2) 累加到全局字符串
+                    llm_output_text += result_cache
+                    # 3) SSE 推送
+                    if 0 in sse_queues:
+                        await sse_queues[0].put(result_cache)
+
+                    result_cache = ""
+        result_cache += msg[lastpos:]
+
+    if result_cache:
+        result_cache = re.sub(r'(?m)^[ \t]*-\s+', '', result_cache)
+        nerfreal.put_msg_txt(result_cache)
+        llm_output_text += result_cache
+        if 0 in sse_queues:
+            await sse_queues[0].put(result_cache)
+
+    # 最后给 SSE 一个 "_done_" 结束标记
+    if 0 in sse_queues:
+        await sse_queues[0].put("_done_")
+
+    dt = time.perf_counter() - start_time
+    print(f"Time to last chunk: {dt:.2f}s")
+
+async def sse_handler(request):
+    if 0 not in sse_queues:
+        return web.Response(status=400, text="Queue not found.")
+
+    resp = web.StreamResponse(
+        status=200,
+        reason="OK",
+        headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            # 不要手动设置 Access-Control-Allow-Origin，与 aiohttp_cors 冲突
+        }
     )
-    print(message)
-    print(completion)
-    result = ""
-    first = True
-    for chunk in completion:
-        if len(chunk.choices) > 0:
-            #print(chunk.choices[0].delta.content)
-            msg = chunk.choices[0].delta.content
-            if msg is None:
-                continue  # 跳过本次循环，继续下一个 chunk
-            if first:
-                end = time.perf_counter()
-                print(f"llm Time to first chunk: {end - start}s")
-                first = False
-            lastpos = 0
-            #msglist = re.split('[,.!;:，。！?]',msg)
-            for i, char in enumerate(msg):
-                if char in ",.!;:，。！？：；":
-                    result = result + msg[lastpos:i + 1]
-                    lastpos = i + 1
-                    if len(result) > 10:
-                        # 判断并去除markdown标题风格的“-”
-                        llm_output_text += result
-                        result = re.sub(r'(?m)^[ \t]*-\s+', '', result)
-                        print(result)
-                        nerfreal.put_msg_txt(result)
-                        # 累加到全局变量
-                        result = ""
-            result = result + msg[lastpos:]
-    end = time.perf_counter()
-    print(f"llm Time to last chunk: {end - start}s")
-    llm_output_text += result
-    nerfreal.put_msg_txt(result)
+    await resp.prepare(request)
+
+    queue = sse_queues[0]
+
+    try:
+        while True:
+            msg = await queue.get()
+            if msg == "_done_":
+                # 向前端发送 event: done
+                done_chunk = "event: done\ndata: [DONE]\n\n"
+                await resp.write(done_chunk.encode("utf-8"))
+                break
+
+            data = f"event: message\ndata: {msg}\n\n"
+            await resp.write(data.encode("utf-8"))
+            await resp.drain()
+        await resp.write_eof()
+    except asyncio.CancelledError:
+        pass
+
+    return resp
 
 
 def randN(N) -> int:
@@ -210,19 +304,16 @@ async def load_answers_from_json():
     with open('answers.json', 'r', encoding='utf-8') as f:
         return json.load(f)
 
-
 async def stop(request):
-    params = await request.json()
-    sessionid = params.get('sessionid', 0)
-    # 重置对话
-    nerfreals[sessionid].flush_talk()
-    #清空llm
-    global llm_output_text
-    if llm_output_text:
-        llm_output_text = ""  # 读取后清空变量
-        return web.json_response({'status': 'success', 'data': ''})
-    else:
-        return web.json_response({'status': 'empty', 'data': ''})
+    # 如果 sessionid 是通过 URL 参数传入
+    sessionid = 0
+    if sessionid in sse_queues:
+        asyncio.run_coroutine_threadsafe(
+            sse_queues[sessionid].put("_done_"),
+            asyncio.get_event_loop()
+        )
+
+    return web.json_response({"status": "stopped"})
 
 
 async def human(request):
@@ -253,9 +344,7 @@ async def human(request):
         nerfreals[sessionid].put_msg_txt(params['text'])
     elif params['type'] == 'chat':
         # chat类型，在线程池中调用llm_response计算
-        res = await asyncio.get_event_loop().run_in_executor(
-            None, llm_response, params['text'], nerfreals[sessionid]
-        )
+        await async_llm_response(user_text, nerfreals[sessionid])
         # 如果你需要将 LLM 的返回值再放入队列，可以取消下一行的注释
         # nerfreals[sessionid].put_msg_txt(res)
 
@@ -599,7 +688,7 @@ if __name__ == '__main__':
     appasync.router.add_post("/record", record)
     appasync.router.add_post("/is_speaking", is_speaking)
     appasync.router.add_static('/', path='web')
-    appasync.router.add_get("/get_llm_output", get_llm_output)
+    appasync.router.add_get("/sse", sse_handler)
 
     # Configure default CORS settings.
     cors = aiohttp_cors.setup(appasync, defaults={
