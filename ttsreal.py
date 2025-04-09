@@ -317,6 +317,7 @@ class VoitsTTS(BaseTTS):
                     eventpoint=None
                     if first:
                         eventpoint={'status':'start','text':text,'msgenvent':textevent}
+                        print(f"[DEBUG] 发送 start 状态, stream idx: {idx}, chunk size: {self.chunk}")
                         first = False
                     self.parent.put_audio_frame(stream[idx:idx+self.chunk],eventpoint)
                     streamlen -= self.chunk
