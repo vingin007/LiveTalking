@@ -107,7 +107,7 @@ class PlayerStreamTrack(MediaStreamTrack):
 
     async def handle_eventpoint(self, ep: dict):
         # ep = {"status":"start", "text":"xxxx"} or {"status":"end", ...}
-        text = ep.get("text", "")
+        text = ep.get("text", "").replace("\n", "\\x0A")
         status = ep.get("status", "")
         msg = f"[{status}] {text}"
         await broadcast_queue.put(msg)
