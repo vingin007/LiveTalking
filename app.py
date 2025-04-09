@@ -234,7 +234,6 @@ async def sse_handler(request):
         headers={
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
-            # 不要手动设置 Access-Control-Allow-Origin，与 aiohttp_cors 冲突
         }
     )
     await resp.prepare(request)
@@ -245,18 +244,23 @@ async def sse_handler(request):
         while True:
             msg = await queue.get()
             if msg == "_done_":
-                # 向前端发送 event: done
                 done_chunk = "event: done\ndata: [DONE]\n\n"
                 await resp.write(done_chunk.encode("utf-8"))
                 break
 
             data = f"event: message\ndata: {msg}\n\n"
-            await resp.write(data.encode("utf-8"))
-            await resp.drain()
-        await resp.write_eof()
-    except asyncio.CancelledError:
-        pass
+            try:
+                await resp.write(data.encode("utf-8"))
+                await resp.drain()
+            except aiohttp.client_exceptions.ClientConnectionResetError:
+                # 客户端已经断开连接，记录日志或直接退出循环
+                print("客户端连接已断开。")
+                break
 
+        await resp.write_eof()
+    except (asyncio.CancelledError, aiohttp.client_exceptions.ClientConnectionResetError):
+        # 当任务被取消或其他写入错误出现时，直接退出处理
+        print("SSE 处理任务被取消或者连接异常终止。")
     return resp
 async def human(request):
     # 读取请求体
