@@ -113,8 +113,7 @@ def llm_response(message, nerfreal):
                     if len(result) > 10:
                         # 判断并去除markdown标题风格的“-”
                         llm_output_text += result
-                        result = re.sub(r'(?m)^[ \t]*-\s+', '', result)
-                        print(result)
+
                         nerfreal.put_msg_txt(result)
                         # 累加到全局变量
                         result = ""

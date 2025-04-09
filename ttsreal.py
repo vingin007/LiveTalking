@@ -21,6 +21,7 @@ import soundfile as sf
 import resampy
 import asyncio
 import edge_tts
+import re
 
 import os
 import hmac
@@ -231,6 +232,8 @@ class FishTTS(BaseTTS):
 class VoitsTTS(BaseTTS):
     def txt_to_audio(self,msg): 
         text,textevent = msg
+        text = re.sub(r'(?m)^[ \t]*-\s+', '', text)
+        print(text)
         self.stream_tts(
             self.gpt_sovits(
                 text,
