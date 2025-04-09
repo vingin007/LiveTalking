@@ -45,7 +45,7 @@ import asyncio
 import torch
 from typing import Dict
 from logger import logger
-from sse_manager import sse_queues
+from sse_manager import client_queues,broadcast_queue
 
 app = Flask(__name__)
 #sockets = Sockets(app)
@@ -59,6 +59,18 @@ llm_output_text = ""
 #####webrtc###############################
 pcs = set()
 
+async def broadcast_task():
+    """后台协程：从 broadcast_queue 拿消息，广播到所有客户端队列。"""
+    while True:
+        msg = await broadcast_queue.get()
+        # 如果我们约定某个特殊消息作为结束标记，也可以在这里处理
+        for q in list(client_queues):
+            # 因为可能会在其他地方把 q 移除，这里要注意捕获异常
+            try:
+                q.put_nowait(msg)
+            except asyncio.QueueFull:
+                # 自行处理队列已满等异常
+                pass
 
 def llm_response(message, nerfreal):
     global llm_output_text  # 声明使用全局变量
@@ -225,8 +237,9 @@ async def stop(request):
         return web.json_response({'status': 'empty', 'data': ''})
 
 async def sse_handler(request):
-    if 0 not in sse_queues:
-        return web.Response(status=400, text="Queue not found.")
+    """给每个新来的 SSE 客户端分配一个独立队列，然后不断读取它。"""
+    queue = asyncio.Queue()
+    client_queues.add(queue)
 
     resp = web.StreamResponse(
         status=200,
@@ -237,8 +250,6 @@ async def sse_handler(request):
         }
     )
     await resp.prepare(request)
-
-    queue = sse_queues[0]
 
     try:
         while True:
@@ -252,16 +263,21 @@ async def sse_handler(request):
             try:
                 await resp.write(data.encode("utf-8"))
                 await resp.drain()
-            except aiohttp.client_exceptions.ClientConnectionResetError:
-                # 客户端已经断开连接，记录日志或直接退出循环
-                print("客户端连接已断开。")
+            except aiohttp.client_exceptions.ClientConnectionError:
+                # 客户端断开连接
                 break
 
         await resp.write_eof()
-    except (asyncio.CancelledError, aiohttp.client_exceptions.ClientConnectionResetError):
-        # 当任务被取消或其他写入错误出现时，直接退出处理
-        print("SSE 处理任务被取消或者连接异常终止。")
+    except (asyncio.CancelledError, aiohttp.client_exceptions.ClientConnectionError):
+        # 当任务被取消或连接异常时退出
+        pass
+    finally:
+        # 移除队列，防止内存泄漏
+        if queue in client_queues:
+            client_queues.remove(queue)
+
     return resp
+
 async def human(request):
     # 读取请求体
     params = await request.json()
@@ -385,6 +401,17 @@ async def post(url, data):
     except aiohttp.ClientError as e:
         logger.info(f'Error: {e}')
 
+async def on_startup(app):
+    """在应用启动时，启动广播任务。"""
+    app['broadcast_task'] = asyncio.create_task(broadcast_task())
+
+async def on_cleanup(app):
+    """在应用清理时，取消广播任务。"""
+    app['broadcast_task'].cancel()
+    try:
+        await app['broadcast_task']
+    except asyncio.CancelledError:
+        pass
 
 async def run(push_url, sessionid):
     nerfreal = await asyncio.get_event_loop().run_in_executor(None, build_nerfreal, sessionid)
@@ -414,7 +441,6 @@ async def run(push_url, sessionid):
 # os.environ['MULTIPROCESSING_METHOD'] = 'forkserver'
 if __name__ == '__main__':
     mp.set_start_method('spawn')
-    sse_queues[0] = asyncio.Queue()
     parser = argparse.ArgumentParser()
     parser.add_argument('--pose', type=str, default="data/data_kf.json", help="transforms.json, pose source")
     parser.add_argument('--au', type=str, default="data/au.csv", help="eye blink area")
@@ -628,6 +654,8 @@ if __name__ == '__main__':
 
     #############################################################################
     appasync = web.Application()
+    appasync.on_startup.append(on_startup)
+    appasync.on_cleanup.append(on_cleanup)
     appasync.on_shutdown.append(on_shutdown)
     appasync.router.add_post("/offer", offer)
     appasync.router.add_post("/human", human)

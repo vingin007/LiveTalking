@@ -1,9 +1,7 @@
-sse_queues = {}
+# 全局只需要一个源队列，用于广播（生产者）写入
+import asyncio
 
-# 如果你想包装个方法来安全地放消息
-async def put_sse(sessionid: int, message: str):
-    if sessionid not in sse_queues:
-        return
-    await sse_queues[sessionid].put(message)
+broadcast_queue = asyncio.Queue()
 
-# 也可以加更多辅助函数
+# 存放所有活跃客户端的独立队列
+client_queues = set()
