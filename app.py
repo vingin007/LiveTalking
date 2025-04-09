@@ -215,6 +215,8 @@ async def stop(request):
     sessionid = 0
     # 重置对话
     nerfreals[sessionid].flush_talk()
+    msg = f"[end]"
+    await broadcast_queue.put(msg)
     #清空llm
     global llm_output_text
     if llm_output_text:
