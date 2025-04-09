@@ -45,7 +45,7 @@ import asyncio
 import torch
 from typing import Dict
 from logger import logger
-from sse_manager import client_queues,broadcast_queue
+from sse_manager import user_queues
 
 app = Flask(__name__)
 #sockets = Sockets(app)
@@ -58,19 +58,6 @@ llm_output_text = ""
 
 #####webrtc###############################
 pcs = set()
-
-async def broadcast_task():
-    """后台协程：从 broadcast_queue 拿消息，广播到所有客户端队列。"""
-    while True:
-        msg = await broadcast_queue.get()
-        # 如果我们约定某个特殊消息作为结束标记，也可以在这里处理
-        for q in list(client_queues):
-            # 因为可能会在其他地方把 q 移除，这里要注意捕获异常
-            try:
-                q.put_nowait(msg)
-            except asyncio.QueueFull:
-                # 自行处理队列已满等异常
-                pass
 
 def llm_response(message, nerfreal):
     global llm_output_text  # 声明使用全局变量
@@ -236,11 +223,17 @@ async def stop(request):
     else:
         return web.json_response({'status': 'empty', 'data': ''})
 
-async def sse_handler(request):
-    """给每个新来的 SSE 客户端分配一个独立队列，然后不断读取它。"""
-    queue = asyncio.Queue()
-    client_queues.add(queue)
+async def sse_handler(request: web.Request) -> web.StreamResponse:
+    # 1) 获取 user_id（必须确保客户端调用时带上这个）
+    user_id = request.query.get("user_id")
+    if not user_id:
+        return web.Response(status=400, text="Missing user_id parameter in query")
 
+    # 2) 为该用户创建一个独立队列，并放到全局字典里
+    queue = asyncio.Queue()
+    user_queues[user_id] = queue
+
+    # 3) 创建 SSE 响应
     resp = web.StreamResponse(
         status=200,
         reason="OK",
@@ -253,28 +246,30 @@ async def sse_handler(request):
 
     try:
         while True:
+            # 不断从用户自己的队列拿消息
             msg = await queue.get()
             if msg == "_done_":
+                # 如果想某个事件让客户端结束，可放一个特定消息
                 done_chunk = "event: done\ndata: [DONE]\n\n"
                 await resp.write(done_chunk.encode("utf-8"))
                 break
 
             data = f"event: message\ndata: {msg}\n\n"
+            # 尝试发送给客户端
             try:
                 await resp.write(data.encode("utf-8"))
                 await resp.drain()
-            except aiohttp.client_exceptions.ClientConnectionError:
+            except ConnectionResetError:
                 # 客户端断开连接
+                print(f"Client {user_id} disconnected.")
                 break
 
         await resp.write_eof()
-    except (asyncio.CancelledError, aiohttp.client_exceptions.ClientConnectionError):
-        # 当任务被取消或连接异常时退出
-        pass
+    except asyncio.CancelledError:
+        print(f"SSE connection for {user_id} is cancelled.")
     finally:
-        # 移除队列，防止内存泄漏
-        if queue in client_queues:
-            client_queues.remove(queue)
+        # 无论正常还是异常结束，都要把队列从全局移除，防止内存泄露
+        user_queues.pop(user_id, None)
 
     return resp
 
@@ -400,18 +395,6 @@ async def post(url, data):
                 return await response.text()
     except aiohttp.ClientError as e:
         logger.info(f'Error: {e}')
-
-async def on_startup(app):
-    """在应用启动时，启动广播任务。"""
-    app['broadcast_task'] = asyncio.create_task(broadcast_task())
-
-async def on_cleanup(app):
-    """在应用清理时，取消广播任务。"""
-    app['broadcast_task'].cancel()
-    try:
-        await app['broadcast_task']
-    except asyncio.CancelledError:
-        pass
 
 async def run(push_url, sessionid):
     nerfreal = await asyncio.get_event_loop().run_in_executor(None, build_nerfreal, sessionid)
@@ -654,8 +637,6 @@ if __name__ == '__main__':
 
     #############################################################################
     appasync = web.Application()
-    appasync.on_startup.append(on_startup)
-    appasync.on_cleanup.append(on_cleanup)
     appasync.on_shutdown.append(on_shutdown)
     appasync.router.add_post("/offer", offer)
     appasync.router.add_post("/human", human)

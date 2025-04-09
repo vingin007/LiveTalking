@@ -26,7 +26,7 @@ from av.packet import Packet
 from av import AudioFrame
 import fractions
 import numpy as np
-from sse_manager import broadcast_queue
+from sse_manager import user_queues
 
 AUDIO_PTIME = 0.020  # 20ms audio packetization
 VIDEO_CLOCK_RATE = 90000
@@ -105,12 +105,24 @@ class PlayerStreamTrack(MediaStreamTrack):
                 mylogger.info('audio start:%f',self._start)
             return self._timestamp, AUDIO_TIME_BASE
 
-    async def handle_eventpoint(self, ep: dict):
-        # ep = {"status":"start", "text":"xxxx"} or {"status":"end", ...}
+    async def handle_eventpoint(user_id: str, ep: dict):
+        """
+        user_id: 触发这次事件的用户ID
+        ep: 你的事件数据, 例如 {"status":"start", "text":"xxxx"}
+        """
         text = ep.get("text", "")
         status = ep.get("status", "")
         msg = f"[{status}] {text}"
-        await broadcast_queue.put(msg)
+
+        # 找到该用户的队列
+        queue = user_queues.get(user_id)
+        if not queue:
+            # 可能用户没连接 SSE 或已经断开, 你可以决定要怎么处理。
+            print(f"User {user_id} is not online or no SSE connection found.")
+            return
+
+        # 把消息放进该用户的独立队列
+        await queue.put(msg)
 
     async def recv(self) -> Union[Frame, Packet]:
         # frame = self.frames[self.counter % 30]            
