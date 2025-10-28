@@ -263,7 +263,6 @@ async def sse_handler(request):
             data = f"event: message\ndata: {msg}\n\n"
             try:
                 await resp.write(data.encode("utf-8"))
-                await resp.drain()
             except aiohttp.client_exceptions.ClientConnectionError:
                 # 客户端断开连接
                 break
@@ -675,6 +674,7 @@ if __name__ == '__main__':
             allow_credentials=True,
             expose_headers="*",
             allow_headers="*",
+            allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         )
     })
     # Configure CORS on all routes.
