@@ -306,9 +306,10 @@ async def human(request):
         nerfreals[sessionid].put_msg_txt(params['text'])
     elif params['type'] == 'chat':
         # chat类型，在线程池中调用llm_response计算
-        res = await asyncio.get_event_loop().run_in_executor(
+        asyncio.get_event_loop().run_in_executor(
             None, llm_response, params['text'], nerfreals[sessionid]
         )
+        return web.json_response({"code": 0, "msg": "started"})
         # 如果你需要将 LLM 的返回值再放入队列，可以取消下一行的注释
         # nerfreals[sessionid].put_msg_txt(res)
 
