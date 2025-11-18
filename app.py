@@ -664,7 +664,7 @@ if __name__ == '__main__':
     appasync.router.add_post("/set_audiotype", set_audiotype)
     appasync.router.add_post("/record", record)
     appasync.router.add_post("/is_speaking", is_speaking)
-    appasync.router.add_static('/', path='web')
+    appasync.router.add_static('/static/', path='web')
     appasync.router.add_get("/sse", sse_handler)
     appasync.router.add_get("/get_llm_output", get_llm_output)
 
@@ -674,7 +674,7 @@ if __name__ == '__main__':
             allow_credentials=True,
             expose_headers="*",
             allow_headers="*",
-            allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            allow_methods="*",
         )
     })
     # Configure CORS on all routes.
