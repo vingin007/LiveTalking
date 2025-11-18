@@ -667,6 +667,8 @@ if __name__ == '__main__':
     appasync.router.add_static('/static/', path='web')
     appasync.router.add_get("/sse", sse_handler)
     appasync.router.add_get("/get_llm_output", get_llm_output)
+    appasync.router.add_route("OPTIONS", "/human", lambda r: web.Response())
+    appasync.router.add_route("OPTIONS", "/stop", lambda r: web.Response())
 
     # Configure default CORS settings.
     cors = aiohttp_cors.setup(appasync, defaults={
